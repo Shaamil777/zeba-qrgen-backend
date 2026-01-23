@@ -1,7 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, Response
 from sqlalchemy.orm import Session
+from sqlalchemy import and_
 from user_agents import parse
+from datetime import datetime
 from ..database import get_db
 from ..models import QRCode, ScanLog, ContactSubmission
 from ..schemas import QRCodeResponse, ContactSubmissionCreate
@@ -24,17 +26,26 @@ def scan_qrcode(qr_id: int, request: Request, db: Session = Depends(get_db)):
     forwarded = request.headers.get("x-forwarded-for")
     ip = forwarded.split(",")[0] if forwarded else request.client.host
     
-    # Log the scan
-    scan = ScanLog(
-        qr_code_id=qr_id,
-        ip_address=ip,
-        user_agent=user_agent_str,
-        device_type=device_type,
-        browser=f"{user_agent.browser.family} {user_agent.browser.version_string}",
-        os=f"{user_agent.os.family} {user_agent.os.version_string}"
-    )
-    db.add(scan)
-    db.commit()
+    # Check if this IP has EVER scanned this specific QR code before
+    existing_scan = db.query(ScanLog).filter(
+        and_(
+            ScanLog.qr_code_id == qr_id,
+            ScanLog.ip_address == ip
+        )
+    ).first()
+    
+    # Only log the scan if this IP has never scanned this QR code before
+    if not existing_scan:
+        scan = ScanLog(
+            qr_code_id=qr_id,
+            ip_address=ip,
+            user_agent=user_agent_str,
+            device_type=device_type,
+            browser=f"{user_agent.browser.family} {user_agent.browser.version_string}",
+            os=f"{user_agent.os.family} {user_agent.os.version_string}"
+        )
+        db.add(scan)
+        db.commit()
     
     # Return QR code details for the landing page
     return {
